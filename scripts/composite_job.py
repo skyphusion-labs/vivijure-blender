@@ -99,9 +99,12 @@ def main() -> int:
     img = bpy.data.images.load(first)
     img.source = "SEQUENCE"
     n_frames = args.frame_end - args.frame_start + 1
-    img.frame_duration = n_frames
-    img.frame_start = args.frame_start
-    img.frame_offset = 0
+    # Sequence framing belongs on the NODE's image_user (set immediately below), NEVER on the
+    # Image datablock. Measured individually on Blender 4.2.8 LTS (vivijure-blender#4):
+    #   img.frame_duration -> AttributeError, "read-only"
+    #   img.frame_start    -> AttributeError, no such attribute on Image
+    #   img.frame_offset   -> AttributeError, no such attribute on Image
+    # All three raised, so deleting only the first would have moved the crash one line down.
     img_node.image = img
     img_node.frame_duration = n_frames
     img_node.frame_start = args.frame_start
@@ -149,8 +152,8 @@ def main() -> int:
             plate_node = tree.nodes.new("CompositorNodeImage")
             pimg = bpy.data.images.load(pfirst)
             pimg.source = "SEQUENCE"
-            pimg.frame_duration = n_frames
-            pimg.frame_start = args.frame_start
+            # Same read-only/absent Image attrs as the main clip above; the plate's framing
+            # is set on plate_node (its image_user) two lines down.
             plate_node.image = pimg
             plate_node.frame_duration = n_frames
             plate_node.frame_start = args.frame_start
