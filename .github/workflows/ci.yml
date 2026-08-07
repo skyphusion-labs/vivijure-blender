@@ -14,6 +14,30 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # `ci` is a REQUIRED status check in the org aviation-grade-main ruleset, matched by
+  # STRING against the job name. This repo produced only `test`, so `ci` never reported
+  # and no PR here could merge -- a required context that never arrives is pending
+  # forever. Shape ported from vivijure-audio-upscale, which is the conformant sibling.
+  #
+  # This is NOT a duplicate of `test` below, and both are needed: `ci` is the lint and
+  # syntax gate (ruff E9 + F, py_compile), while `test` runs the suite and is separately
+  # required by this repo's OWN aviation-grade-main ruleset. The sibling has no test job
+  # because it has nothing CPU-testable; this repo does.
+  ci:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff (pinned for a deterministic gate)
+        run: pip install ruff==0.15.20
+      - name: Lint (real errors only -- E9 syntax + F pyflakes)
+        run: ruff check --select E9,F .
+      - name: Syntax-compile the entrypoints
+        run: python -m py_compile handler.py scripts/composite_job.py
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 10

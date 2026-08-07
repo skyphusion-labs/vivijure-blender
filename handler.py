@@ -22,7 +22,6 @@ or { ok: false, error } -- the module soft-degrades on non-ok.
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import tempfile
 import time
