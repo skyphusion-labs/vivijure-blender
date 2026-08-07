@@ -234,6 +234,27 @@ def _run_blender(
         tail = ((proc.stderr or "") + "\n" + (proc.stdout or ""))[-2000:]
         raise RuntimeError(f"blender exit {proc.returncode}: {tail}")
 
+    # A zero exit is NOT evidence that anything rendered. `blender -b --python` runs the
+    # script inside its own interpreter and EXITS 0 even when that script dies on an
+    # uncaught exception: it prints the traceback, says "Blender quit", and returns 0.
+    # So the returncode check above is structurally incapable of seeing a script that
+    # crashed, and the only symptom reaches the caller two steps later as an ffmpeg error
+    # about a missing input pattern -- naming the wrong component with full confidence
+    # (vivijure-blender#4, which is exactly how a read-only bpy attribute presented).
+    # Verify the ARTIFACT the step exists to produce, and carry blender's own output into
+    # the error, because on a zero exit it is otherwise discarded.
+    produced = sorted(
+        n for n in os.listdir(out_dir)
+        if n.startswith("frame_") and n.endswith(".png")
+    )
+    expected = frame_end  # rendered 1..frame_end inclusive; see --frame-start above
+    if len(produced) < expected:
+        tail = ((proc.stderr or "") + "\n" + (proc.stdout or ""))[-2000:]
+        raise RuntimeError(
+            f"blender exited 0 but wrote {len(produced)} of {expected} frames "
+            f"to {out_dir}: {tail}"
+        )
+
 
 def _selftest() -> dict[str, Any]:
     """No network: prove blender + ffmpeg are wired."""
