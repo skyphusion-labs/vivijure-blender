@@ -23,4 +23,4 @@ RunPod **finish satellite**: headless Blender compositor for Vivijure. Paired CF
 
 ## Version
 
-Image / package narrative: **0.1.0**. Bump CHANGELOG + image tag together.
+Image / package narrative: **0.1.1**. Bump CHANGELOG + image tag together.
