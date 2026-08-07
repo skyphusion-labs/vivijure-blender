@@ -51,7 +51,10 @@ on:
     branches: [main]
     paths:
       - Dockerfile
+      - Dockerfile.serve
       - handler.py
+      - runpod_http_serve.py
+      - serve.py
       - requirements.txt
       - scripts/**
       - .github/workflows/build-image.yml
@@ -108,10 +111,133 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
 
-      - name: Build and push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: ${{ github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v') }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+      - name: Build image
+        # Plain docker build rather than build-push-action/buildx, because the serve overlay
+        # below builds FROM this image and must resolve it LOCALLY. buildx leaves the release
+        # image in the buildkit cache, so the overlay would silently re-resolve its base from
+        # the registry and build on whatever GHCR happens to hold rather than on what this job
+        # just produced. That failure has no tell: the build succeeds and the log looks the
+        # same. (vivijure-audio-upscale also uses plain docker build, but for a DIFFERENT
+        # reason, a host-prep tag rewrite. This repo has no such prep; the reason here is the
+        # overlay, and saying so keeps the next reader from removing it as cargo cult.)
+        # meta.outputs.tags is newline-separated, so it must not expand inline in a for loop.
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          ARGS=""
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            ARGS="$ARGS -t $t"
+          done <<< "$META_TAGS"
+          docker build $ARGS .
+
+      - name: Push image
+        # Publish ONLY on a version tag or a deliberate workflow_dispatch; a bare merge to
+        # main builds the image above as a smoke and never pushes it.
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -euo pipefail
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            docker push "$t"
+          done <<< "$META_TAGS"
+
+      - name: Build serve overlay
+        # ALWAYS builds, so a bare merge to main smoke-builds the overlay exactly like the
+        # release image; only the push below is gated. Plain docker build for the same reason
+        # as above: buildx would re-resolve the base from the registry and bypass the local
+        # image this job just produced.
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+          META_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ -z "${META_VERSION:-}" ]; then
+            echo "::error::metadata-action produced no version; cannot resolve a serve base"
+            exit 1
+          fi
+          base="${IMAGE}:${META_VERSION}"
+
+          # CONTROL 1 -- the base must be one of the tags THIS job built. Whole-line match
+          # (grep -Fxq), because a substring match would accept a near-miss tag, which is the
+          # defect class that keeps costing this crew real time.
+          if ! printf "%s\\n" "$META_TAGS" | grep -Fxq "$base"; then
+            echo "::error::resolved serve base ${base} is not among the tags this job built:"
+            printf "%s\\n" "$META_TAGS"
+            exit 1
+          fi
+
+          # CONTROL 2 -- and it must already be LOCAL. Without this, docker would silently
+          # PULL a same-named tag from GHCR and build the overlay on a base that is NOT the
+          # one just built. That failure has no tell: the build succeeds and the log looks
+          # identical. This is also what catches it if the release build above ever goes back
+          # to buildx, since buildx would leave nothing local to find.
+          if ! docker image inspect "$base" >/dev/null 2>&1; then
+            echo "::error::serve base ${base} absent locally; refusing to let docker pull a stale one"
+            exit 1
+          fi
+          echo "serve base ${base} -> image id $(docker image inspect --format "{{.Id}}" "$base")"
+
+          # Derive the serve tags FROM the release tags rather than restating them: a hand-kept
+          # list forks from its source, and the fork reads as authoritative.
+          : > "$RUNNER_TEMP/serve-tags.txt"
+          m=0
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            m=$((m + 1))
+            echo "${t}-serve" >> "$RUNNER_TEMP/serve-tags.txt"
+          done <<< "$META_TAGS"
+          n="$(wc -l < "$RUNNER_TEMP/serve-tags.txt")"
+          # DENOMINATOR -- printed, and a floor, so a zero is a harness failure and never a pass.
+          echo "derived ${n} serve tags of ${m} release tags:"
+          cat "$RUNNER_TEMP/serve-tags.txt"
+          if [ "$m" -eq 0 ] || [ "$n" -ne "$m" ]; then
+            echo "::error::derived ${n} serve tags from ${m} release tags; expected 1:1 and at least one"
+            exit 1
+          fi
+
+          ARGS=""
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            ARGS="$ARGS -t $t"
+          done < "$RUNNER_TEMP/serve-tags.txt"
+          docker build -f Dockerfile.serve --build-arg "BLENDER_IMAGE=${base}" $ARGS .
+
+      - name: Push serve overlay
+        # Same gate as the release push: only a version tag or a deliberate workflow_dispatch
+        # publishes. A bare merge to main built the overlay above and stops there.
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+        run: |
+          set -euo pipefail
+          if [ ! -s "$RUNNER_TEMP/serve-tags.txt" ]; then
+            echo "::error::serve tag list is missing or empty; the build step did not produce one"
+            exit 1
+          fi
+          pushed=0
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            docker push "$t"
+            pushed=$((pushed + 1))
+          done < "$RUNNER_TEMP/serve-tags.txt"
+          echo "pushed ${pushed} of $(wc -l < "$RUNNER_TEMP/serve-tags.txt") serve tags"
+          [ "$pushed" -gt 0 ]
+
+      - name: Remove local images to free runner disk
+        if: always()
+        env:
+          META_TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          set -uo pipefail
+          if [ -s "$RUNNER_TEMP/serve-tags.txt" ]; then
+            while IFS= read -r t; do
+              [ -n "$t" ] || continue
+              docker image rm "$t" || true
+            done < "$RUNNER_TEMP/serve-tags.txt"
+          fi
+          while IFS= read -r t; do
+            [ -n "$t" ] || continue
+            docker image rm "$t" || true
+          done <<< "$META_TAGS"
