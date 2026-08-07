@@ -1,0 +1,6 @@
+# vivijure-blender -- RunPod serverless handler deps.
+# Blender itself is installed from the official Linux x64 tarball in the Dockerfile
+# (not pip). Keep this list lean: transport + serverless only.
+boto3>=1.34,<2
+requests>=2.31,<3
+runpod>=1.7,<2

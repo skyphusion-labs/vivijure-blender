@@ -1,0 +1,11 @@
+vivijure-blender
+Copyright (C) 2026 Conrad Rockenhaus / Skyphusion Labs
+
+This product includes software developed for the Vivijure constellation.
+Licensed under AGPL-3.0-only. See LICENSE.
+
+Bundled at runtime (Docker image):
+  - Blender (GNU GPL). https://www.blender.org/
+    Official release tarball from download.blender.org; not modified.
+  - FFmpeg (LGPL/GPL depending on build). System package from Ubuntu.
+  - Python packages listed in requirements.txt (their respective licenses).
