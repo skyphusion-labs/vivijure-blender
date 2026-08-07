@@ -4,13 +4,31 @@ name: build-image
 #
 # Unified image workflow (mirrors vivijure-upscale): a pushed SemVer tag (v0.1.0)
 # publishes the immutable, pinnable release image tagged with the clean version
-# (0.1.0), major.minor (0.1), and short commit sha. There is NO :latest -- RunPod
-# endpoint templates pin an explicit :version. A push to main that touches image
+# (0.1.0), major.minor (0.1), and short commit sha. A push to main that touches image
 # inputs still BUILDS as a smoke but does NOT push; only a version tag or
 # workflow_dispatch publishes. A bare merge to main never publishes.
 #
 # Public repo -> GitHub-hosted ubuntu-latest (fork-safe). Free-disk step reclaims
 # hosted runner space for the CUDA base + Blender tarball.
+#
+# :latest EXISTS and TRACKS THE NEWEST RELEASE. NOTHING MAY EVER PIN IT.
+# RunPod templates, compose files and connectivity-directory services pin an explicit
+# version (0.1.1) or a digest (sha256:...), never `latest`. That is the real invariant:
+# the point was never that the tag must not exist, it was that a deploy must never
+# FLOAT. "Never pin latest" serves that fully, and unlike the old wording it is a rule
+# this workflow can actually hold.
+#
+# This header previously read "There is NO :latest". That was false. docker/metadata-action
+# defaults to `flavor: latest=auto`, which adds the tag whenever a SEMVER tag matches,
+# regardless of the `tags:` list below -- and v0.1.1, the FIRST real tag-push bake in this
+# repo, minted one. The claim had never been exercised: 0.1.0 was published by
+# workflow_dispatch, which carries no semver tag, so latest=auto never fired.
+#
+# `latest=auto` is KEPT DELIBERATELY. GHCR deletes by VERSION (digest), and :latest shares
+# its digest with 0.1.1 / 0.1 / sha-<short>, so the tag cannot be removed without deleting
+# the release. Setting latest=false would therefore FREEZE :latest at 0.1.1 forever, and a
+# STALE :latest is strictly more dangerous than a current one -- it is the tag most likely
+# to be pulled by accident, and it would silently serve an old image.
 #
 # NO Plane C admission gate. This repo has zero `[self-hosted, ...]` jobs, so it is
 # not a Plane C repo and does not belong in the `vivijure-gpu-builds` runner group.
