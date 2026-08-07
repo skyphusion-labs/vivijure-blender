@@ -85,6 +85,15 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.IMAGE }}
+          # docker/metadata-action defaults to `latest=auto`, which adds a :latest tag
+          # whenever a SEMVER tag matches -- regardless of what `tags:` below asks for.
+          # The header's "there is NO :latest" was therefore false, and measurably so on
+          # the FIRST real tag push (v0.1.1 minted one). It had never been exercised
+          # before: 0.1.0 was published by workflow_dispatch, which carries no semver tag,
+          # so latest=auto never fired. A check against this FILE cannot catch it -- the
+          # string is genuinely absent here and the tag comes from the action's defaults.
+          flavor: |
+            latest=false
           tags: |
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
