@@ -1,0 +1,26 @@
+# Serve overlay for the resident blender finish door (fc#1592). Same base image the RunPod
+# serverless worker already ships, with the entrypoint swapped for a long-lived HTTP server
+# that speaks the RunPod /run + /status contract.
+#
+# BLENDER_IMAGE HAS NO DEFAULT ON PURPOSE (mirrors vivijure-audio-upscale). A literal default
+# is a hand copy of something the artifact already knows, so it drifts one release at a time,
+# and its failure mode is a door that WORKS while running a stale base, which is the failure
+# nobody investigates. Docker refuses an empty FROM at parse time, before any pull, so a
+# forgotten arg fails loudly and instantly instead of silently building the wrong thing.
+#
+# CMD is python3, NOT python. The other serve overlays say python because their bases provide
+# it; this base does not. Verified against ghcr.io/skyphusion-labs/vivijure-blender:0.1.1 --
+# python ABSENT, python3 PRESENT, curl PRESENT. The same gap applies to any healthcheck
+# written for this image: a python -c healthcheck copied from the media stack fails here,
+# so use curl against /health instead.
+#
+# A hand build must pass the arg explicitly:
+#   docker build -f Dockerfile.serve \
+#     --build-arg BLENDER_IMAGE=ghcr.io/skyphusion-labs/vivijure-blender:<version> \
+#     -t vivijure-blender-serve:dev .
+ARG BLENDER_IMAGE
+FROM ${BLENDER_IMAGE}
+
+COPY handler.py runpod_http_serve.py serve.py /app/
+WORKDIR /app
+CMD ["python3", "serve.py"]
