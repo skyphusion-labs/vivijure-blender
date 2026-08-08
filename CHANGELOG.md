@@ -1,5 +1,48 @@
 # Changelog
 
+## 0.2.0 -- 2026-08-08
+
+### Added
+
+- **Resident serve overlay (`Dockerfile.serve`, `serve.py`, `runpod_http_serve.py`).** The
+  door can now run as an always-on HTTP service on our own hardware instead of a RunPod
+  serverless worker, speaking the same `/run` + `/status` contract. Ported from
+  `vivijure-audio-upscale`; the job shape already transferred, since blender takes a clip
+  and returns a graded clip over R2 and answers with a small JSON result rather than a
+  blob. `CMD` is `python3`, not `python`: this base image has no `python` binary, which
+  also defeats any `python -c` healthcheck copied from the media stack.
+- **`-serve` images are built and published by CI**, as `<tag>-serve` for every release
+  tag, from the same source tree as the release image they are based on. Before this,
+  nothing anywhere built a serve image for this repo.
+- **Secrets can arrive as files.** `serve.py` fills `NAME` from `NAME_FILE` at start, the
+  standard Docker and swarm convention, so a stack never has to carry a plaintext value in
+  an `environment:` block. An already-set `NAME` always wins, so a door that passes plain
+  environment variables cannot be overridden by a stale secret file. The startup line
+  prints the NAMES it filled and never the values.
+
+### Fixed
+
+- **An oversize or unparseable request body was accepted as an EMPTY job.** `_body()`
+  answered `None` for three different situations (no body at all, a body past the 1 MiB
+  cap, and a body that would not parse), and `/run` then did
+  `payload = (body or {}).get("input", body or {})`, so all three were accepted with a
+  `200` and a job id and ran with no input at all. The caller received a success shape for
+  a request that was never honoured, and the job failed later naming a missing field
+  rather than naming the body. Now `413` and `400` respectively, checked AFTER
+  authentication so an unauthenticated caller still gets `401` and learns nothing about
+  the cap. The memory-DoS half of the cap always worked, since an oversize body is never
+  read into memory, and that is exactly why the semantics half went unnoticed.
+
+### Changed
+
+- CI builds the release image with plain `docker build` plus a separate push rather than
+  `docker/build-push-action`. The serve overlay builds `FROM` the release image and must
+  resolve it LOCALLY; buildx leaves it in the buildkit cache, so the overlay would
+  silently re-resolve its base from the registry and build on whatever GHCR happened to
+  hold. That failure has no tell: the build succeeds and the log is identical. Two
+  controls now guard it, requiring the base to be among the tags the job just built and
+  to be present locally.
+
 ## 0.1.1 -- 2026-08-07
 
 ### Fixed
