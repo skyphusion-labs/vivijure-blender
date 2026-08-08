@@ -85,6 +85,10 @@ class JobRegistry:
                 try:
                     self._queue.remove(job_id)
                 except ValueError:
+                    # Defensive. Under this lock the queue and the status should agree,
+                    # so a missing entry means they briefly did not. Cancellation is NOT
+                    # lost either way: the job is marked FAILED and retained immediately
+                    # below whether or not the dequeue found anything to remove.
                     pass
                 job.status = JobStatus.FAILED
                 job.error = "canceled before start"
@@ -334,6 +338,10 @@ def run_serve(
     try:
         httpd.serve_forever()
     except (KeyboardInterrupt, SystemExit):
+        # Both are the NORMAL shutdown path, not failures: SIGTERM arrives here as
+        # SystemExit via _graceful above, and Ctrl-C as KeyboardInterrupt. Swallowing
+        # them keeps an orderly stop from exiting with a traceback in the container log.
+        # The finally below closes the socket and drains the registry either way.
         pass
     finally:
         httpd.server_close()
