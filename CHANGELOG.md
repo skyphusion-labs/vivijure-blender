@@ -1,5 +1,41 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- **The grade path applied Blender's default AgX view transform to display-referred
+  footage, wrecking every preset (vivijure-blender#14).** `scripts/composite_job.py` set
+  the render engine, resolution, fps and output format but never touched colour
+  management, so `scene.view_settings.view_transform` kept its Blender 4.x default of
+  `AgX` -- a filmic tone mapper built for scene-linear HDR renders. The input here is
+  already display-referred (PNG frames pulled out of a finished h264 clip), so every job
+  re-tonemapped an image that had already been tonemapped. It happens AFTER the
+  compositor, on the way out to PNG, so it hit every preset identically and could not
+  have been tuned away in the preset table.
+
+  Measured on two live door renders, 2026-08-14:
+
+  | run | preset | source YAVG | graded YAVG |
+  |---|---|---|---|
+  | `film-a0f533e0` | `high_contrast` @1.4 | 102.14 | 34.45 |
+  | `film-8f704826` | `neutral` @1.0 (identity) | 91.90 | 27.35 |
+
+  The second is the one that settles it: `neutral` at strength 1.0 is a mathematical
+  identity in the preset table (gamma 1.0, lift 0, gain 1, saturation 1), so the
+  ColorBalance and HueSat nodes are no-ops -- and the clip still came back 3.3x darker
+  with a heavy red cast. The grade math was never the cause.
+
+  Fixed by pinning `view_transform="Standard"`, `look="None"`, `exposure=0`, `gamma=1`
+  and `display_device="sRGB"` explicitly, with NO `try/except` around them: a silently
+  skipped colour-management write is exactly this defect, and it reads as a clean run.
+
+  Guarded by `tests/test_color_management.py`, which is a SOURCE guard because CI has no
+  Blender and because no existing gate can see this -- the job exits 0, writes the right
+  frame count, and produces a structurally valid mp4 of the right dimensions and
+  duration. Only the pixels are wrong. The guard was driven RED against the pre-fix
+  source before being trusted green.
+
 ## 0.2.0 -- 2026-08-08
 
 ### Added

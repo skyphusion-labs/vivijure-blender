@@ -83,6 +83,35 @@ def main() -> int:
     scene.render.use_sequencer = False
     scene.use_nodes = True
 
+    # COLOUR MANAGEMENT IS SET EXPLICITLY, NEVER INHERITED (vivijure-blender#14).
+    #
+    # Blender 4.x defaults `scene.view_settings.view_transform` to "AgX", a filmic tone
+    # mapper designed for SCENE-LINEAR HDR renders. Our input is DISPLAY-REFERRED footage:
+    # PNG frames ffmpeg extracted from an already-finished h264 clip. Leaving the default
+    # therefore re-tonemaps an image that has already been tonemapped -- shadows crush and
+    # saturated hues swing -- and it does so identically for every preset, because it
+    # happens AFTER the compositor, on the way to the PNG.
+    #
+    # MEASURED on a live door render, 2026-08-14 (film-a0f533e0):
+    #   preset=high_contrast strength=1.4, frame 48: YAVG 106.71 -> 30.22, a 3.5x
+    #   darkening with a heavy red shift, out of a preset table whose strongest term is
+    #   gamma 0.9 / gain 1.12. The preset math was never the cause and tuning it would
+    #   have chased the wrong component.
+    #
+    # "Standard" is the identity display transform: what the compositor computes is what
+    # lands in the PNG. `look` is a SECOND, independent grade that would stack silently on
+    # top of ours, so it is pinned to None rather than left to the file default.
+    #
+    # NO try/except HERE, deliberately, unlike the node-property writes below. A silently
+    # skipped colour-management assignment is precisely the defect this block removes, and
+    # it would read as a clean run. If a future Blender renames these, this must fail the
+    # job loudly rather than render a wrong grade.
+    scene.view_settings.view_transform = "Standard"
+    scene.view_settings.look = "None"
+    scene.view_settings.exposure = 0.0
+    scene.view_settings.gamma = 1.0
+    scene.display_settings.display_device = "sRGB"
+
     tree = scene.node_tree
     tree.nodes.clear()
 
