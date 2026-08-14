@@ -4,37 +4,46 @@
 
 ### Fixed
 
-- **The grade path applied Blender's default AgX view transform to display-referred
-  footage, wrecking every preset (vivijure-blender#14).** `scripts/composite_job.py` set
-  the render engine, resolution, fps and output format but never touched colour
-  management, so `scene.view_settings.view_transform` kept its Blender 4.x default of
-  `AgX` -- a filmic tone mapper built for scene-linear HDR renders. The input here is
-  already display-referred (PNG frames pulled out of a finished h264 clip), so every job
-  re-tonemapped an image that had already been tonemapped. It happens AFTER the
-  compositor, on the way out to PNG, so it hit every preset identically and could not
-  have been tuned away in the preset table.
+- **A `neutral` grade at strength 1.0 -- a mathematical identity -- crushed every clip to
+  roughly a third of its luma. TWO independent defects, and neither is sufficient alone
+  (vivijure-blender#14).**
 
-  Measured on two live door renders, 2026-08-14:
+  **1. Blender's lift is identity at 1.0, not 0.0.** The `PRESETS` table is authored in the
+  ASC-CDL / offset convention, where lift `0.0` means no change; that is what `neutral`
+  declares and what `_mix_preset` lerps toward at strength 0. Blender's
+  `CompositorNodeColorBalance` in `LIFT_GAMMA_GAIN` mode uses the opposite convention --
+  identity lift is `(1,1,1)`, which it ships as the node default. Passing the offset straight
+  through applied a full `-1.0` lift on every job. This is the dominant term.
 
-  | run | preset | source YAVG | graded YAVG |
-  |---|---|---|---|
-  | `film-a0f533e0` | `high_contrast` @1.4 | 102.14 | 34.45 |
-  | `film-8f704826` | `neutral` @1.0 (identity) | 91.90 | 27.35 |
+  **2. The default view transform is AgX.** The script set engine, resolution, fps and output
+  format but never touched colour management, so `scene.view_settings.view_transform` kept its
+  Blender 4.x default of `AgX` -- a filmic tone mapper for scene-linear HDR renders, applied
+  after the compositor to display-referred input. Worth ~5 YAVG and ~45 YMAX (highlight
+  compression).
 
-  The second is the one that settles it: `neutral` at strength 1.0 is a mathematical
-  identity in the preset table (gamma 1.0, lift 0, gain 1, saturation 1), so the
-  ColorBalance and HueSat nodes are no-ops -- and the clip still came back 3.3x darker
-  with a heavy red cast. The grade math was never the cause.
+  **Measured by driving the real `scripts/composite_job.py` against the pinned Blender 4.2.8
+  LTS**, one real source frame, identity grade (`neutral` @ 1.0), YAVG of the written PNG:
 
-  Fixed by pinning `view_transform="Standard"`, `look="None"`, `exposure=0`, `gamma=1`
-  and `display_device="sRGB"` explicitly, with NO `try/except` around them: a silently
-  skipped colour-management write is exactly this defect, and it reads as a clean run.
+  | build | YAVG | YMAX |
+  |---|---|---|
+  | source frame | 91.77 | 227 |
+  | `origin/main` (production) | 27.94 | 180 |
+  | view-transform fix ONLY | 28.93 | 220 |
+  | **view transform + lift** | **92.12** | **228** |
 
-  Guarded by `tests/test_color_management.py`, which is a SOURCE guard because CI has no
-  Blender and because no existing gate can see this -- the job exits 0, writes the right
-  frame count, and produces a structurally valid mp4 of the right dimensions and
-  duration. Only the pixels are wrong. The guard was driven RED against the pre-fix
-  source before being trusted green.
+  The third row is the reason both are listed: fixing only the view transform reads as fixed
+  and is not. `view_transform` was also confirmed as `'AgX'` by querying factory settings on
+  4.2.8 directly, rather than inferred from release notes.
+
+  Colour management is pinned with **no** `try/except`, unlike the node-property writes: a
+  silently skipped assignment here is the defect itself and would read as a clean run.
+
+  Guarded by `tests/test_color_management.py`, a SOURCE guard because CI has no Blender and no
+  runtime gate can see this -- the job exits 0, writes the right frame count, and produces a
+  structurally valid mp4 of the correct dimensions and duration. Each defect was driven red
+  SEPARATELY with the other fixed, proving the two assertion families are independent rather
+  than one check wearing two names: both broken 5 failed / 3 passed; lift-only broken 1 failed
+  / 7 passed; view-transform-only broken 4 failed / 4 passed; both fixed 22 passed.
 
 ## 0.2.0 -- 2026-08-08
 
