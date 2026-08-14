@@ -149,7 +149,27 @@ def main() -> int:
     except Exception:
         pass
     try:
-        color.lift = lift
+        # BLENDER'S LIFT IS IDENTITY AT 1.0, NOT 0.0 (vivijure-blender#14).
+        #
+        # The PRESETS table above is authored in the ASC-CDL / offset convention, where a lift
+        # of 0.0 means "no change" -- that is what `neutral` declares and what `_mix_preset`
+        # lerps toward at strength 0. Blender's CompositorNodeColorBalance in LIFT_GAMMA_GAIN
+        # mode uses the opposite convention: its identity lift is (1,1,1), and it ships that as
+        # the node default. Passing the offset value straight through therefore applied a full
+        # -1.0 lift on every job, including `neutral` at strength 1.0, which is supposed to be
+        # a mathematical identity.
+        #
+        # MEASURED locally against Blender 4.2.8 LTS (the pinned version), one real source
+        # frame, YAVG of the identity grade, 2x2 against the view transform:
+        #
+        #     lift 0.0 + AgX       27.94   <- what production shipped
+        #     lift 0.0 + Standard  28.93   <- fixing ONLY the view transform: still wrong
+        #     lift 1.0 + AgX       87.47
+        #     lift 1.0 + Standard  92.12   <- source frame is 91.77
+        #
+        # Both fixes are required and neither is sufficient alone. The lift is the dominant
+        # term; the view transform is worth ~5 YAVG and ~45 YMAX (highlight compression).
+        color.lift = tuple(1.0 + c for c in lift)
         color.gamma = (gamma, gamma, gamma)
         color.gain = gain
     except Exception:

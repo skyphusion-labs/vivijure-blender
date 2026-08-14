@@ -101,3 +101,56 @@ def test_preset_table_is_gentle_so_a_big_shift_indicts_the_pipeline():
         assert all(abs(c) <= 0.1 for c in lift), f"{name}: lift {lift} outside the gentle band"
         assert all(0.85 <= c <= 1.25 for c in gain), f"{name}: gain {gain} outside the gentle band"
         assert 0.8 <= sat <= 1.25, f"{name}: saturation {sat} outside the gentle band"
+
+
+# ---------------------------------------------------------------------------------------------
+# THE DOMINANT DEFECT, found only by RUNNING Blender (vivijure-blender#14).
+#
+# The first version of this guard covered the view transform alone. That was measured, shipped as
+# "the fix", and was NOT sufficient: an identity grade still came back 3.2x dark. Driving the real
+# script against the pinned Blender 4.2.8 LTS on one real source frame, identity grade
+# (preset=neutral strength=1.0), YAVG of the written PNG:
+#
+#     source frame                              91.77
+#     origin/main (production)                  27.94
+#     view-transform fix ONLY                   28.93   <- reads as fixed, is not
+#     view-transform + lift convention          92.12
+#
+# Cause: the PRESETS table is authored in ASC-CDL / offset convention, where lift 0.0 is
+# "no change". Blender's CompositorNodeColorBalance in LIFT_GAMMA_GAIN mode has identity lift
+# (1,1,1) and ships that as its node default. Passing the offset straight through applied a full
+# -1.0 lift to every job.
+# ---------------------------------------------------------------------------------------------
+
+
+def test_lift_is_converted_from_offset_convention_to_blender_convention():
+    """The assignment must add 1.0, because the table and the node disagree about identity."""
+    src = _src()
+    assert re.search(r"color\.lift\s*=\s*tuple\(\s*1\.0\s*\+\s*c\s+for\s+c\s+in\s+lift\s*\)", src), (
+        "color.lift is assigned the raw offset value. Blender's LIFT_GAMMA_GAIN identity lift is "
+        "(1,1,1), not (0,0,0), so the PRESETS table's offset convention must be converted at the "
+        "assignment. Without this, `neutral` at strength 1.0 -- a mathematical identity -- crushes "
+        "the image to roughly a third of its luma."
+    )
+
+
+def test_neutral_is_an_identity_in_the_table_it_is_authored_in():
+    """Pins the premise that makes the conversion correct: the table's OFFSET identity is 0.0, so
+    a straight pass-through is wrong and `1.0 + c` is the right correction rather than a fudge."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("composite_job_lift", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(mod)
+
+    gamma, lift, gain, sat = mod.PRESETS["neutral"]
+    assert (gamma, tuple(lift), tuple(gain), sat) == (1.0, (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 1.0), (
+        "`neutral` is no longer an identity in the authored table; the lift conversion and the "
+        "measurements in vivijure-blender#14 both assume it is."
+    )
+    # strength 0 must also be identity in the SAME convention.
+    g, li, ga, sa = mod._mix_preset("high_contrast", 0.0)
+    assert (g, tuple(li), tuple(ga), sa) == (1.0, (0.0, 0.0, 0.0), (1.0, 1.0, 1.0), 1.0), (
+        "_mix_preset no longer lerps toward the offset identity at strength 0"
+    )
