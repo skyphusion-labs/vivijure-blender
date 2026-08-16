@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **Finish guards summed above the 5400s phase ceiling, so one attempt could
+  not complete and the film died as "stalled, no progress" (vivijure-blender#17).**
+  `_process` runs download, extract, ffprobe, blender, encode, and upload
+  sequentially; the per-leg caps SUM. Old defaults (DOWNLOAD/UPLOAD 900,
+  FFMPEG 1200, BLENDER 1800) added to 6180s grade / 8280s composite against
+  `PHASE_HARD_DEADLINE_SECONDS = 5400` in vivijure-core. New defaults 300 /
+  300 / 480 / 1800 (blender unchanged; it is the work) add to 3540s grade /
+  4320s composite, 1080s under the ceiling on the longest path. The helper
+  `declared_budget_seconds` reads the values the process is running with, and
+  `_process` refuses an env override that would recreate the stall. The core
+  ceiling is not raised. Guarded by `tests/test_budget.py`.
+
 - **A `neutral` grade at strength 1.0 -- a mathematical identity -- crushed every clip to
   roughly a third of its luma. TWO independent defects, and neither is sufficient alone
   (vivijure-blender#14).**

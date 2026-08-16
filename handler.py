@@ -35,14 +35,63 @@ BLENDER_BIN = os.environ.get("BLENDER_BIN", "/opt/blender/blender")
 COMPOSITE_SCRIPT = os.environ.get(
     "COMPOSITE_SCRIPT", "/app/scripts/composite_job.py"
 )
-DOWNLOAD_TIMEOUT = int(os.environ.get("DOWNLOAD_TIMEOUT", "900") or "900")
-UPLOAD_TIMEOUT = int(os.environ.get("UPLOAD_TIMEOUT", "900") or "900")
-FFMPEG_TIMEOUT = int(os.environ.get("FFMPEG_TIMEOUT", "1200") or "1200")
+# Studio phase ceiling this door is governed by. Symbol is
+# PHASE_HARD_DEADLINE_SECONDS in vivijure-core src/film-model.ts; the value has
+# never moved. One attempt that outlives this dies as "stalled, no progress"
+# because filmProgressMarker does not count attempts (vivijure-blender#17).
+# Do not raise that ceiling to match this door; keep this door under it.
+PHASE_HARD_DEADLINE_SECONDS = 5400
+
+# Per-leg caps. `_process` runs these sequentially, so they SUM. Sized so the
+# longest path (composite) stays under PHASE_HARD_DEADLINE_SECONDS on attempt 1.
+#
+# Old defaults (DOWNLOAD/UPLOAD 900, FFMPEG 1200, BLENDER 1800) summed to
+# 6180s grade / 8280s composite -- both above the 5400s ceiling, so finish
+# could not complete on attempt 1. Blender stays 1800s (the actual work);
+# transfer and ffmpeg drop because a MAX_FRAMES=600 clip does not need 15-20
+# minutes to copy or encode.
+DOWNLOAD_TIMEOUT = int(os.environ.get("DOWNLOAD_TIMEOUT", "300") or "300")
+UPLOAD_TIMEOUT = int(os.environ.get("UPLOAD_TIMEOUT", "300") or "300")
+FFMPEG_TIMEOUT = int(os.environ.get("FFMPEG_TIMEOUT", "480") or "480")
 BLENDER_TIMEOUT = int(os.environ.get("BLENDER_TIMEOUT", "1800") or "1800")
+FFPROBE_FPS_TIMEOUT = 60
+FFPROBE_COUNT_TIMEOUT = 120
 MAX_FRAMES = int(os.environ.get("MAX_FRAMES", "600") or "600")
 
 PRESETS = ("neutral", "filmic_warm", "high_contrast", "cool", "soft")
 JOB_TYPES = ("grade", "composite")
+
+
+def declared_budget_seconds(job_type: str = "composite") -> int:
+    """Worst-case wall clock for one invocation if every sequential guard is fully consumed.
+
+    This is the number the studio phase ceiling is compared against. It must stay
+    strictly under PHASE_HARD_DEADLINE_SECONDS at the defaults (vivijure-blender#17).
+    Reads the values this process is running with, not the hardcoded defaults, so
+    an env override is visible here rather than a claim about a different deploy.
+    """
+    n_downloads = 2 if job_type == "composite" else 1
+    n_extracts = 2 if job_type == "composite" else 1
+    return (
+        n_downloads * DOWNLOAD_TIMEOUT
+        + n_extracts * FFMPEG_TIMEOUT
+        + FFPROBE_FPS_TIMEOUT
+        + FFPROBE_COUNT_TIMEOUT
+        + BLENDER_TIMEOUT
+        + FFMPEG_TIMEOUT  # encode
+        + UPLOAD_TIMEOUT
+    )
+
+
+def _budget_error() -> str | None:
+    budget = declared_budget_seconds("composite")
+    if budget >= PHASE_HARD_DEADLINE_SECONDS:
+        return (
+            f"declared composite budget {budget}s >= phase ceiling "
+            f"{PHASE_HARD_DEADLINE_SECONDS}s; one attempt cannot complete "
+            f"(vivijure-blender#17)"
+        )
+    return None
 
 
 def _env(name: str) -> str:
@@ -85,7 +134,7 @@ def _probe_fps_frames(path: str) -> tuple[float, int]:
                 "-show_entries", "stream=r_frame_rate,nb_frames",
                 "-of", "default=noprint_wrappers=1:nokey=1", path,
             ],
-            capture_output=True, text=True, timeout=60,
+            capture_output=True, text=True, timeout=FFPROBE_FPS_TIMEOUT,
         )
         lines = [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
         if lines:
@@ -109,7 +158,7 @@ def _probe_fps_frames(path: str) -> tuple[float, int]:
                     "-show_entries", "stream=nb_read_frames",
                     "-of", "default=nokey=1:noprint_wrappers=1", path,
                 ],
-                capture_output=True, text=True, timeout=120,
+                capture_output=True, text=True, timeout=FFPROBE_COUNT_TIMEOUT,
             )
             n = (r.stdout or "").strip()
             if n.isdigit():
@@ -316,6 +365,12 @@ def _process(job: dict[str, Any]) -> dict[str, Any]:
     except (TypeError, ValueError):
         strength = 1.0
     strength = max(0.0, min(2.0, strength))
+
+    # Env overrides can recreate the #17 stall. Refuse before any download so a
+    # mis-sized deploy fails loud instead of running past the phase ceiling.
+    budget_err = _budget_error()
+    if budget_err:
+        return {"ok": False, "error": budget_err}
 
     clip_key = job.get("clip_key") or ""
     output_key = job.get("output_key") or (
