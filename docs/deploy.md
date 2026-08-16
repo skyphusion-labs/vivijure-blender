@@ -32,9 +32,19 @@ Expect `{ "ok": true, "applied": ["selftest:grade:filmic_warm"], ... }`.
 | Env | Default | Meaning |
 | --- | --- | --- |
 | `MAX_FRAMES` | 600 | hard cap on extracted frames |
+| `DOWNLOAD_TIMEOUT` | 300 | seconds for one clip/plate download |
+| `UPLOAD_TIMEOUT` | 300 | seconds for the result upload |
+| `FFMPEG_TIMEOUT` | 480 | extract / encode wall clock |
 | `BLENDER_TIMEOUT` | 1800 | seconds for the blender process |
-| `FFMPEG_TIMEOUT` | 1200 | extract / encode wall clock |
 | `BLENDER_BIN` | `/opt/blender/blender` | override binary path |
+
+These legs run sequentially in one job, so they sum. The longest path
+(composite: two downloads, two extracts, probes, blender, encode, upload)
+must stay under the studio phase ceiling of 5400s (`PHASE_HARD_DEADLINE_SECONDS`
+in vivijure-core). At the defaults that path is 4320s. Raising a knob until
+the composite sum meets or exceeds 5400 makes the door refuse the job rather
+than stall the film (vivijure-blender#17). Do not raise the core ceiling to
+match a larger door budget.
 
 ## GPU note
 
