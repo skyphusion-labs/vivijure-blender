@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **Presigned `video_url` / `output_url` / `plate_url` were fetched with no
+  SSRF gate, and exception text echoed the full URL including X-Amz tokens.**
+  The handler now copies the musetalk / audio-upscale guard: https only, no
+  localhost, DNS-resolve and refuse private / loopback / link-local / metadata
+  addresses, optional `R2_URL_HOST_SUFFIX` pin when set, and connect to the
+  validated IP with `allow_redirects=False`. Query strings in caller-facing
+  errors are replaced with `?[redacted]`. Guarded by
+  `tests/test_url_validation.py`.
+
 - **Finish guards summed above the 5400s phase ceiling, so one attempt could
   not complete and the film died as "stalled, no progress" (vivijure-blender#17).**
   `_process` runs download, extract, ffprobe, blender, encode, and upload

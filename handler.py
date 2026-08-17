@@ -21,11 +21,15 @@ or { ok: false, error } -- the module soft-degrades on non-ok.
 """
 from __future__ import annotations
 
+import ipaddress
 import os
+import re
+import socket
 import subprocess
 import tempfile
 import time
 from typing import Any
+from urllib.parse import urlparse, urlunparse
 
 import boto3
 import requests
@@ -60,6 +64,106 @@ MAX_FRAMES = int(os.environ.get("MAX_FRAMES", "600") or "600")
 
 PRESETS = ("neutral", "filmic_warm", "high_contrast", "cool", "soft")
 JOB_TYPES = ("grade", "composite")
+
+# Optional pin for presigned hosts (e.g. ".r2.cloudflarestorage.com"). Empty = skip host-suffix check.
+R2_URL_HOST_SUFFIX = os.environ.get("R2_URL_HOST_SUFFIX", "").strip().lower()
+
+# requests / urllib3 exception text embeds the full URL, including the presigned query.
+_FULL_URL_QUERY_RE = re.compile(r"(https?://[^\s'\"<>]+)\?[^\s'\"<>]*", re.IGNORECASE)
+_LABELED_URL_QUERY_RE = re.compile(r"(url:\s+\S+?)\?[^\s'\"<>]*", re.IGNORECASE)
+
+
+def _redact_query(text: str | None) -> str | None:
+    """Strip query strings so presigned tokens never leave the worker in errors or logs."""
+    if not text:
+        return text
+    s = str(text)
+    s = _FULL_URL_QUERY_RE.sub(r"\1?[redacted]", s)
+    s = _LABELED_URL_QUERY_RE.sub(r"\1?[redacted]", s)
+    return s
+
+
+def _ip_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+
+def _resolve_public_ips(host: str) -> list[str]:
+    """Resolve host; return public IPs or raise ValueError with a job-facing message."""
+    try:
+        infos = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    except socket.gaierror as e:
+        raise ValueError(f"URL host does not resolve: {e}") from e
+    public: list[str] = []
+    blocked = False
+    for _fam, _type, _proto, _canon, sockaddr in infos:
+        ip = ipaddress.ip_address(sockaddr[0])
+        if _ip_blocked(ip):
+            blocked = True
+        else:
+            public.append(str(ip))
+    if blocked or not public:
+        raise ValueError("URL resolves to a blocked address")
+    return public
+
+
+def _url_error(url: Any, what: str) -> str | None:
+    """Refuse non-https / private / link-local / loopback / optional non-R2 host. Returns err str or None.
+
+    Presigned mode otherwise lets any job submitter drive GET/PUT from the GPU worker (SSRF). Resolve
+    the hostname and reject blocked address classes; callers must also pass allow_redirects=False and
+    connect to a pre-validated IP (see _pinned_https) so DNS cannot rebind between check and fetch."""
+    try:
+        p = urlparse(str(url or ""))
+    except Exception:  # noqa: BLE001 -- malformed URL is a job error, not a crash
+        return f"{what}: malformed URL"
+    if p.scheme != "https" or not p.hostname:
+        return f"{what}: URL must be https with a hostname"
+    host = p.hostname.lower()
+    if host == "localhost" or host.endswith(".localhost"):
+        return f"{what}: URL host is blocked"
+    if R2_URL_HOST_SUFFIX:
+        suffix = R2_URL_HOST_SUFFIX if R2_URL_HOST_SUFFIX.startswith(".") else f".{R2_URL_HOST_SUFFIX}"
+        bare = suffix.lstrip(".")
+        if host != bare and not host.endswith(suffix):
+            return f"{what}: URL host must end with {R2_URL_HOST_SUFFIX}"
+    try:
+        _resolve_public_ips(host)
+    except ValueError as e:
+        return f"{what}: {e}"
+    return None
+
+
+def _pinned_https(method: str, url: str, *, timeout: int, headers=None, data=None, stream: bool = False):
+    """HTTPS GET/PUT that resolves once, rejects private addrs, and connects to that IP (DNS-rebinding safe)."""
+    from requests.adapters import HTTPAdapter  # deferred: keeps CPU test stubs light
+
+    class _SniAdapter(HTTPAdapter):
+        """Keep TLS SNI / hostname verify on the original host while connecting to a pinned IP."""
+
+        def __init__(self, server_hostname, **kwargs):
+            self._server_hostname = server_hostname
+            super().__init__(**kwargs)
+
+        def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+            pool_kwargs["assert_hostname"] = self._server_hostname
+            pool_kwargs["server_hostname"] = self._server_hostname
+            return super().init_poolmanager(connections, maxsize, block=block, **pool_kwargs)
+
+    p = urlparse(str(url or ""))
+    if p.scheme != "https" or not p.hostname:
+        raise ValueError("URL must be https with a hostname")
+    host = p.hostname.lower()
+    ip = _resolve_public_ips(host)[0]
+    netloc_host = f"[{ip}]" if ":" in ip else ip
+    netloc = f"{netloc_host}:{p.port}" if p.port else netloc_host
+    pinned = urlunparse((p.scheme, netloc, p.path or "/", p.params, p.query, ""))
+    hdrs = dict(headers or {})
+    hdrs["Host"] = host if not p.port else f"{host}:{p.port}"
+    session = requests.Session()
+    session.mount("https://", _SniAdapter(host))
+    return session.request(method, pinned, timeout=timeout, headers=hdrs, data=data,
+                           stream=stream, allow_redirects=False)
 
 
 def declared_budget_seconds(job_type: str = "composite") -> int:
@@ -169,7 +273,10 @@ def _probe_fps_frames(path: str) -> tuple[float, int]:
 
 
 def _download_url(url: str, dest: str) -> None:
-    with requests.get(url, stream=True, timeout=DOWNLOAD_TIMEOUT) as r:
+    err = _url_error(url, "download_url")
+    if err:
+        raise ValueError(err)
+    with _pinned_https("GET", url, timeout=DOWNLOAD_TIMEOUT, stream=True) as r:
         r.raise_for_status()
         with open(dest, "wb") as f:
             for chunk in r.iter_content(chunk_size=1024 * 1024):
@@ -187,12 +294,14 @@ def _upload_key(client, path: str, key: str) -> int:
 
 
 def _upload_url(path: str, url: str) -> int:
+    err = _url_error(url, "output_url")
+    if err:
+        raise ValueError(err)
     size = os.path.getsize(path)
     with open(path, "rb") as f:
-        r = requests.put(
-            url, data=f,
+        r = _pinned_https(
+            "PUT", url, data=f, timeout=UPLOAD_TIMEOUT,
             headers={"Content-Type": "video/mp4", "Content-Length": str(size)},
-            timeout=UPLOAD_TIMEOUT,
         )
         r.raise_for_status()
     return size
@@ -401,6 +510,15 @@ def _process(job: dict[str, Any]) -> dict[str, Any]:
             "error": "need clip_key (R2) or video_url+output_url (presigned)",
         }
 
+    if not use_r2:
+        for u, name in ((video_url, "video_url"), (output_url, "output_url"),
+                        (plate_url, "plate_url")):
+            if name == "plate_url" and not u:
+                continue
+            err = _url_error(u, name)
+            if err:
+                return {"ok": False, "error": err}
+
     t0 = time.time()
     with tempfile.TemporaryDirectory(prefix="vj-blender-") as td:
         src = os.path.join(td, "src.mp4")
@@ -468,9 +586,9 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
             return {"ok": False, "error": "missing input object"}
         return _process(job)
     except subprocess.TimeoutExpired as e:
-        return {"ok": False, "error": f"timeout: {e}"}
+        return {"ok": False, "error": _redact_query(f"timeout: {e}")}
     except Exception as e:  # noqa: BLE001 -- surface as data for module soft-degrade
-        return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+        return {"ok": False, "error": _redact_query(f"{type(e).__name__}: {e}")}
 
 
 if __name__ == "__main__":
