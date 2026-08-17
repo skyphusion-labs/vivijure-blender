@@ -14,7 +14,9 @@ Job input (R2 finish-chain mode -- shared bucket):
     "plate_key":   "..."             # optional; composite underlay plate
   }
 
-Presigned mode also accepted: video_url + output_url (+ optional plate_url).
+Presigned mode also accepted: video_url + output_url + output_key
+(+ optional plate_url). output_key is required so the returned clip_key is a
+real R2 key; the transport mode name is never a substitute (vivijure-blender#12).
 
 Returns: { ok, shot_id?, clip_key, out_fps, frames, applied, bytes, preset, job_type }
 or { ok: false, error } -- the module soft-degrades on non-ok.
@@ -509,6 +511,11 @@ def _process(job: dict[str, Any]) -> dict[str, Any]:
             "ok": False,
             "error": "need clip_key (R2) or video_url+output_url (presigned)",
         }
+    if not output_key:
+        return {
+            "ok": False,
+            "error": "need output_key (or clip_key to derive one); clip_key cannot be a transport-mode name",
+        }
 
     if not use_r2:
         for u, name in ((video_url, "video_url"), (output_url, "output_url"),
@@ -556,10 +563,9 @@ def _process(job: dict[str, Any]) -> dict[str, Any]:
         if use_r2:
             assert r2 is not None and output_key
             _upload_key(r2, out_mp4, output_key)
-            result_key = output_key
         else:
             _upload_url(out_mp4, output_url)
-            result_key = output_key or "presigned"
+        result_key = output_key
 
     applied = [f"blender:{job_type}:{preset}"]
     if strength != 1.0:

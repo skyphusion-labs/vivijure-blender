@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **Presigned mode returned the literal string `presigned` as `clip_key`
+  (vivijure-blender#12, #18).** The R2 branch already asserted `output_key` was
+  present. The presigned branch invented a truthy placeholder for the same
+  field (`result_key = output_key or "presigned"`), and the studio accepted
+  it as a real R2 key. A paid compose then pointed every later step at a
+  nonexistent object. Presigned jobs now require `output_key` (or a
+  `clip_key` to derive one from) before any fetch, and the returned
+  `clip_key` is that written key. Never a transport-mode name.
+
 - **Presigned `video_url` / `output_url` / `plate_url` were fetched with no
   SSRF gate, and exception text echoed the full URL including X-Amz tokens.**
   The handler now copies the musetalk / audio-upscale guard: https only, no

@@ -82,6 +82,7 @@ def test_process_rejects_bad_url_before_io(monkeypatch):
         "preset": "neutral",
         "video_url": "http://169.254.169.254/latest",
         "output_url": "https://bucket.example/o",
+        "output_key": "renders/p/clips/shot_bl.mp4",
     })
     assert out["ok"] is False and "error" in out
     assert "https" in out["error"]
