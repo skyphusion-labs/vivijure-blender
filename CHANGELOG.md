@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **Identity-preserving grades (`neutral` @ ~1.0, or strength 0) now fail
+  the job when the encoded clip's mean luma (ffmpeg YAVG) drifts more than
+  2% from the source (skyphusion-labs/vivijure-cf#567).** After encode,
+  src and out both exist on disk; this door is the caller that holds both.
+  Creative grades are not checked (a deliberate darken is not wrecked).
+  ffmpeg/decode miss fails the job; it is not a skip-as-pass. A wrecked
+  identity is not uploaded as success. Guarded by
+  `tests/test_photometric_identity.py`.
+
 - **Presigned mode returned the literal string `presigned` as `clip_key`
   (vivijure-blender#12, #18).** The R2 branch already asserted `output_key` was
   present. The presigned branch invented a truthy placeholder for the same

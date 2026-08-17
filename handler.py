@@ -67,6 +67,11 @@ MAX_FRAMES = int(os.environ.get("MAX_FRAMES", "600") or "600")
 PRESETS = ("neutral", "filmic_warm", "high_contrast", "cool", "soft")
 JOB_TYPES = ("grade", "composite")
 
+# Same measurement as vivijure-cf photometric_gate.RATIO_TOLERANCE (cf#567).
+# Meaningful only for identity-preserving grades; creative grades must not use it.
+RATIO_TOLERANCE = 0.02
+_YAVG_RE = re.compile(r"lavfi\.signalstats\.YAVG=([0-9.eE+-]+)")
+
 # Optional pin for presigned hosts (e.g. ".r2.cloudflarestorage.com"). Empty = skip host-suffix check.
 R2_URL_HOST_SUFFIX = os.environ.get("R2_URL_HOST_SUFFIX", "").strip().lower()
 
@@ -337,6 +342,62 @@ def _extract_frames(video: str, out_dir: str) -> int:
     return len(frames)
 
 
+def _identity_preserving_grade(job_type: str, preset: str, strength: float) -> bool:
+    """True only when the grade is supposed to preserve luma (cf#567).
+
+    grade + (neutral @ ~1.0, or strength 0 on any preset). Creative grades
+    (filmic_warm etc. at nonzero strength) must not be checked.
+    """
+    if job_type != "grade":
+        return False
+    if strength == 0.0:
+        return True
+    return preset == "neutral" and abs(strength - 1.0) <= 1e-6
+
+
+def _mean_luma(path: str) -> float:
+    """Mean luma via ffmpeg signalstats YAVG. Fail loud if the clip cannot be measured."""
+    try:
+        proc = subprocess.run(
+            [
+                "ffmpeg", "-hide_banner", "-nostats",
+                "-i", path,
+                "-vf", "signalstats,metadata=print:file=-",
+                "-an", "-f", "null", "-",
+            ],
+            capture_output=True, text=True, timeout=FFMPEG_TIMEOUT,
+        )
+    except (OSError, subprocess.TimeoutExpired) as e:
+        raise RuntimeError(f"photometric identity: ffmpeg failed on {path}: {e}") from e
+    text = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+    values = [float(m) for m in _YAVG_RE.findall(text)]
+    if not values:
+        tail = text[-500:]
+        raise RuntimeError(
+            f"photometric identity: no YAVG from {path} (rc={proc.returncode}): {tail}"
+        )
+    return sum(values) / len(values)
+
+
+def _photometric_identity(src: str, out_mp4: str) -> dict[str, Any]:
+    """Compare mean luma of src vs encoded out. Decode miss raises, never skip-as-pass."""
+    src_luma = _mean_luma(src)
+    out_luma = _mean_luma(out_mp4)
+    if src_luma <= 0:
+        raise RuntimeError(
+            f"photometric identity: source luma is non-positive ({src_luma})"
+        )
+    ratio = out_luma / src_luma
+    ok = abs(ratio - 1.0) <= RATIO_TOLERANCE
+    return {
+        "verdict": "ok" if ok else "wrecked",
+        "ratio": round(ratio, 4),
+        "tolerance": RATIO_TOLERANCE,
+        "src_luma": round(src_luma, 3),
+        "output_luma": round(out_luma, 3),
+    }
+
+
 def _encode_video(frame_dir: str, fps: float, audio_src: str | None, out_mp4: str) -> None:
     pattern = os.path.join(frame_dir, "%06d.png")
     # Blender names frame_0001.png when filepath is frame_; also accept bare %06d from us.
@@ -558,6 +619,22 @@ def _process(job: dict[str, Any]) -> dict[str, Any]:
 
         out_mp4 = os.path.join(td, "out.mp4")
         _encode_video(out_dir, fps, src, out_mp4)
+
+        if _identity_preserving_grade(job_type, preset, strength):
+            try:
+                gate = _photometric_identity(src, out_mp4)
+            except RuntimeError as e:
+                return {"ok": False, "error": str(e)}
+            if gate["verdict"] == "wrecked":
+                return {
+                    "ok": False,
+                    "error": (
+                        f"photometric identity wrecked: ratio {gate['ratio']} "
+                        f"outside +/-{gate['tolerance']}"
+                    ),
+                    "photometric": gate,
+                }
+
         size = os.path.getsize(out_mp4)
 
         if use_r2:

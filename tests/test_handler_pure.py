@@ -95,6 +95,8 @@ def _stub_presigned_pipeline(monkeypatch):
     monkeypatch.setattr(handler, "_upload_url", lambda _path, _url: 18)
     monkeypatch.setattr(handler, "_url_error", lambda _url, _what: None)
     monkeypatch.setattr(handler, "_r2_client", lambda: None)
+    # Neutral @ 1.0 is an identity grade; these tests prove clip_key, not luma.
+    monkeypatch.setattr(handler, "_mean_luma", lambda _p: 100.0)
 
 
 def test_presigned_returns_output_key_not_mode_name(monkeypatch):
