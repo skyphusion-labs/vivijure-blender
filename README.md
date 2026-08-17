@@ -155,6 +155,10 @@ See studio [docs/opt-in-tiers.md](https://github.com/skyphusion-labs/vivijure-cf
 }
 ```
 
+Presigned mode: `video_url` + `output_url` + `output_key` (the written key
+returned as `clip_key`; the mode name is never substituted). Optional
+`plate_url` for composite. Caller URLs are https-only and DNS-pinned.
+
 Self-test (no R2): `{"selftest": true}`.
 
 ## Dev (CPU)
