@@ -39,8 +39,18 @@ name: build-image
 # Hosted now. The in-repo sync-gpu-allowlist job stays gone: it blocked v0.1.1
 # with "no tags-kind workflow declared for repo vivijure-blender" and published
 # nothing. Group membership and selected_workflows lived in fleet-chezmoi
-# scripts/sync-vivijure-gpu-builds-allowlist.sh, which now governs an empty group.
-# Do not re-add the job here.
+# scripts/sync-vivijure-gpu-builds-allowlist.sh. That script was DELETED 2026-09-24
+# (fleet-chezmoi 0b5c8b4) and the runner group it fed has 0 runners, so there is
+# nothing left for the job to talk to. Do not re-add the job here.
+#
+# This repo hit that failure FIRST, and the same trap was still armed elsewhere until
+# 2026-09-25: on vivijure-local, -local-12gb and -local-16gb the job was tag-gated and
+# every publish job was `needs:` it under `always() && (success || skipped)`. Once the
+# script was deleted the step FAILED on a v* tag, a failure is neither success nor
+# skipped, so the publisher was SKIPPED and the release published nothing while
+# reporting no error. Removed there under vivijure-local#443, -12gb#158, -16gb#144 and
+# vivijure-backend#452. The lesson is the gate, not the script: a downstream `if` that
+# accepts 'skipped' but not 'failure' converts a broken dependency into a silent no-op.
 #
 # A workflow_dispatch build publishes ONLY `sha-<short>`. It deliberately mints no
 # version number: a dispatch is not a release. This previously carried a hardcoded
