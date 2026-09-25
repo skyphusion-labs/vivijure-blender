@@ -8,10 +8,14 @@ name: build-image
 # inputs still BUILDS as a smoke but does NOT push; only a version tag or
 # workflow_dispatch publishes. A bare merge to main never publishes.
 #
-# Image bake runs on Plane C [self-hosted, bake-capable] (org group
-# vivijure-gpu-builds, allow-public ON). Triggers are workflow_dispatch, main,
-# and version tags -- not pull_request -- so a fork cannot reach the fleet.
-# Free-disk step stays gated on github-hosted for a hosted fallback.
+# Image bake runs on GitHub-hosted `ubuntu-latest`. Plane C [self-hosted, bake-capable]
+# (org group vivijure-gpu-builds, allow-public ON) is HISTORY: the fleet was
+# decommissioned 2026-09-24 on cost, that group has no members, and a job still pinned
+# to the label does not fail, it QUEUES FOREVER and silently. Triggers are unchanged
+# (workflow_dispatch, main, and version tags, not pull_request), so a fork still cannot
+# reach this job. The free-disk step is no longer a fallback: its github-hosted guard is
+# TRUE now, which makes it LOAD-BEARING (this image is ~2.2 GB compressed, the smallest
+# of the satellite bakes).
 #
 # :latest EXISTS and TRACKS THE NEWEST RELEASE. NOTHING MAY EVER PIN IT.
 # RunPod templates, compose files and connectivity-directory services pin an explicit
@@ -32,10 +36,11 @@ name: build-image
 # STALE :latest is strictly more dangerous than a current one -- it is the tag most likely
 # to be pulled by accident, and it would silently serve an old image.
 #
-# Plane C now. The in-repo sync-gpu-allowlist job stays gone: it blocked v0.1.1
+# Hosted now. The in-repo sync-gpu-allowlist job stays gone: it blocked v0.1.1
 # with "no tags-kind workflow declared for repo vivijure-blender" and published
-# nothing. Group membership and selected_workflows live in fleet-chezmoi
-# scripts/sync-vivijure-gpu-builds-allowlist.sh. Do not re-add the job here.
+# nothing. Group membership and selected_workflows lived in fleet-chezmoi
+# scripts/sync-vivijure-gpu-builds-allowlist.sh, which now governs an empty group.
+# Do not re-add the job here.
 #
 # A workflow_dispatch build publishes ONLY `sha-<short>`. It deliberately mints no
 # version number: a dispatch is not a release. This previously carried a hardcoded
@@ -68,7 +73,9 @@ concurrency:
 
 jobs:
   build:
-    runs-on: [self-hosted, bake-capable]
+    # Plane C is gone (fleet decommissioned 2026-09-24); ubuntu-latest is the only live CI
+    # plane, and this image has 12 prior successful bakes there.
+    runs-on: ubuntu-latest
     timeout-minutes: 240
     env:
       IMAGE: ghcr.io/skyphusion-labs/vivijure-blender
