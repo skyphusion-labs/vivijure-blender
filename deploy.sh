@@ -39,7 +39,13 @@ CONTAINER_DISK_GB="${CONTAINER_DISK_GB:-40}"
 WORKERS_MIN="${WORKERS_MIN:-0}"          # 0 = scale to zero (pay nothing when idle)
 WORKERS_MAX="${WORKERS_MAX:-2}"
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-5}"        # seconds a worker stays warm after a job before scaling down
+# 900000 ms (15 minutes) is the invocation ceiling. The handler's composite
+# declared budget is longer. Do not raise this default to match that budget:
+# a longer runaway bills for the new ceiling, and a ceiling above 1800s moves
+# the studio phase deadline. The handler reads this same variable and warns
+# when its budget is longer. The value is not changed here.
 EXECUTION_TIMEOUT_MS="${EXECUTION_TIMEOUT_MS:-900000}"
+export EXECUTION_TIMEOUT_MS
 SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_ENDPOINT="${SKIP_ENDPOINT:-0}"
 CONTAINER_REGISTRY_AUTH_ID="${CONTAINER_REGISTRY_AUTH_ID:-}"
@@ -116,6 +122,7 @@ import json,os
 # endpoint env: R2 finish-chain creds plus any handler tuning knobs you set in deploy.env.
 env={}
 for k in ("R2_ENDPOINT_URL","R2_BUCKET","R2_ACCESS_KEY_ID","R2_SECRET_ACCESS_KEY",
+          "EXECUTION_TIMEOUT_MS",
           "FFMPEG_TIMEOUT","BLENDER_TIMEOUT","MAX_FRAMES","BLENDER_BIN","COMPOSITE_SCRIPT"):
     v=os.environ.get(k,"")
     if v: env[k]=v
