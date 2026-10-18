@@ -98,6 +98,47 @@ def test_default_running_budget_is_not_refused():
     assert "budget" not in out["error"]
 
 
+def test_default_invocation_ceiling_is_15_minutes(monkeypatch):
+    # The deploy default. This test fails if someone raises it to match the budget.
+    monkeypatch.delenv("EXECUTION_TIMEOUT_MS", raising=False)
+    assert handler.DEFAULT_EXECUTION_TIMEOUT_MS == 900_000
+    assert handler.invocation_ceiling_seconds() == 900
+
+
+def test_default_budget_warns_when_it_exceeds_the_invocation_ceiling(monkeypatch):
+    monkeypatch.delenv("EXECUTION_TIMEOUT_MS", raising=False)
+    budget = handler.declared_budget_seconds("composite")
+    msg = handler.invocation_ceiling_warning()
+    assert budget > 900
+    assert msg is not None
+    assert str(budget) in msg
+    assert "900" in msg
+    # The phase-ceiling refusal stays quiet. This gap is a warning, not a refusal.
+    assert handler._budget_error() is None
+
+
+def test_warning_is_quiet_when_the_ceiling_covers_the_budget(monkeypatch):
+    monkeypatch.setenv("EXECUTION_TIMEOUT_MS", "5000000")
+    assert handler.invocation_ceiling_seconds() == 5000
+    assert handler.invocation_ceiling_warning() is None
+
+
+def test_handler_prints_the_ceiling_warning_once(monkeypatch, capsys):
+    monkeypatch.delenv("EXECUTION_TIMEOUT_MS", raising=False)
+    handler._ceiling_warned = False
+    handler.handler({"input": {"job_type": "nope"}})
+    handler.handler({"input": {"job_type": "nope"}})
+    err = capsys.readouterr().err
+    assert err.count("WARNING:") == 1
+    assert "900" in err
+
+
+def test_deploy_default_and_container_env_stay_at_900000():
+    src = (ROOT / "deploy.sh").read_text(encoding="utf-8")
+    assert 'EXECUTION_TIMEOUT_MS="${EXECUTION_TIMEOUT_MS:-900000}"' in src
+    assert '"EXECUTION_TIMEOUT_MS"' in src
+
+
 def test_probe_timeouts_are_the_named_constants():
     # The 60s / 120s ffprobe legs are in the #17 sum. If they go back to
     # magic numbers the helper can drift from the call sites.

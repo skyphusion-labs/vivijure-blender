@@ -28,6 +28,7 @@ import os
 import re
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from typing import Any
@@ -207,6 +208,54 @@ def _budget_error() -> str | None:
 
 def _env(name: str) -> str:
     return (os.environ.get(name) or "").strip()
+
+
+# RunPod kills the worker at executionTimeoutMs. deploy.sh defaults that to
+# 900000 ms (15 minutes) and copies the same variable into the container env.
+# The composite declared budget is longer, so a per-leg guard above this
+# ceiling never fires: the platform kills the worker first. Do not raise the
+# 900000 default to match the budget. A longer runaway bills for that long,
+# and a ceiling above 1800s moves the studio phase deadline. This check warns.
+# It does not refuse the job, and it does not change either number.
+DEFAULT_EXECUTION_TIMEOUT_MS = 900_000
+
+
+def invocation_ceiling_seconds() -> int:
+    """Seconds RunPod will let this invocation run. Defaults to the deploy.sh ceiling."""
+    raw = _env("EXECUTION_TIMEOUT_MS") or str(DEFAULT_EXECUTION_TIMEOUT_MS)
+    try:
+        ms = int(raw)
+    except ValueError:
+        ms = DEFAULT_EXECUTION_TIMEOUT_MS
+    if ms < 0:
+        ms = 0
+    return ms // 1000
+
+
+def invocation_ceiling_warning() -> str | None:
+    budget = declared_budget_seconds("composite")
+    ceiling = invocation_ceiling_seconds()
+    if budget > ceiling:
+        return (
+            f"WARNING: declared composite budget {budget}s exceeds the "
+            f"invocation ceiling {ceiling}s (EXECUTION_TIMEOUT_MS). "
+            f"RunPod kills the worker before a per-leg guard above that "
+            f"ceiling can fire. Neither number was moved."
+        )
+    return None
+
+
+_ceiling_warned = False
+
+
+def warn_invocation_ceiling() -> str | None:
+    """Print the ceiling warning once per process. Returns the same text."""
+    global _ceiling_warned
+    msg = invocation_ceiling_warning()
+    if msg and not _ceiling_warned:
+        _ceiling_warned = True
+        print(msg, file=sys.stderr)
+    return msg
 
 
 def _r2_client():
@@ -663,6 +712,7 @@ def _process(job: dict[str, Any]) -> dict[str, Any]:
 
 
 def handler(event: dict[str, Any]) -> dict[str, Any]:
+    warn_invocation_ceiling()
     try:
         job = event.get("input") if isinstance(event, dict) else None
         if not isinstance(job, dict):
@@ -675,4 +725,5 @@ def handler(event: dict[str, Any]) -> dict[str, Any]:
 
 
 if __name__ == "__main__":
+    warn_invocation_ceiling()
     runpod.serverless.start({"handler": handler})
