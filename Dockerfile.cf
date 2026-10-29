@@ -1,0 +1,48 @@
+# CPU Cloudflare Container image for vivijure-blender.
+# Same compositor pin as the RunPod image (Blender 4.2.8 LTS).
+# No CUDA. Cloudflare Containers have no GPU.
+#
+# Download uses the nluug mirror. blender.org returns a challenge from this build net.
+
+FROM python:3.11-slim-bookworm
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    BLENDER_VERSION=4.2.8 \
+    BLENDER_MAJOR=4.2 \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PORT=8000 \
+    BLENDER_BIN=/opt/blender/blender \
+    PATH="/opt/blender:${PATH}" \
+    COMPOSITE_SCRIPT=/app/scripts/composite_job.py
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      ca-certificates curl xz-utils \
+      ffmpeg \
+      libx11-6 libxi6 libxxf86vm1 libxfixes3 libxrender1 libgl1 \
+      libxkbcommon0 libsm6 libice6 libxcursor1 libxrandr2 libxinerama1 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL -o /tmp/blender.tar.xz \
+      "https://ftp.nluug.nl/pub/graphics/blender/release/Blender${BLENDER_MAJOR}/blender-${BLENDER_VERSION}-linux-x64.tar.xz" \
+    && mkdir -p /opt/blender \
+    && tar -xJf /tmp/blender.tar.xz -C /opt/blender --strip-components=1 \
+    && rm /tmp/blender.tar.xz \
+    && /opt/blender/blender -b --version
+
+WORKDIR /app
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY handler.py runpod_http_serve.py serve.py /app/
+COPY scripts/composite_job.py /app/scripts/composite_job.py
+
+RUN ffmpeg -y -f lavfi -i color=c=blue:s=320x240:d=0.1:r=16 \
+      -c:v libx264 -preset ultrafast -pix_fmt yuv420p /tmp/warm.mp4 \
+    && rm -f /tmp/warm.mp4 \
+    && /opt/blender/blender -b --version >/tmp/blender-ver.txt \
+    && echo "blender+ffmpeg bake OK"
+
+EXPOSE 8000
+CMD ["python", "serve.py"]
