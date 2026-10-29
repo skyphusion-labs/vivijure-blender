@@ -31,6 +31,14 @@ function bearer(request: Request): string {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (request.method === "GET" && url.pathname === "/ready") {
+      const expected = env.LOCAL_FINISH_TOKEN || "";
+      return Response.json({
+        ok: true,
+        token_configured: expected.length > 0,
+        token_len: expected.length,
+      });
+    }
     const isHealth = request.method === "GET" && url.pathname === "/health";
     if (!isHealth) {
       const expected = env.LOCAL_FINISH_TOKEN || "";
@@ -39,6 +47,6 @@ export default {
         return unauthorized();
       }
     }
-    return getContainer(env.BLENDER, "door").fetch(request);
+    return getContainer(env.BLENDER, "grade").fetch(request);
   },
 };

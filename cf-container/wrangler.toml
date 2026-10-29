@@ -8,12 +8,16 @@ compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 preview_urls = false
 
+# Door bearer. Value is a wrangler secret, never a [vars] entry.
+[secrets]
+required = ["LOCAL_FINISH_TOKEN"]
+
 [[containers]]
 class_name = "BlenderContainer"
 image = "../Dockerfile.cf"
 image_build_context = ".."
 instance_type = "standard-1"
-max_instances = 1
+max_instances = 2
 
 [[durable_objects.bindings]]
 name = "BLENDER"
