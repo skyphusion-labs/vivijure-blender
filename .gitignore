@@ -1,6 +1,9 @@
 deploy.env
 .env
+.dev.vars
 .venv/
+cf-container/node_modules/
+cf-container/.wrangler/
 __pycache__/
 *.pyc
 .pytest_cache/
