@@ -55,3 +55,10 @@ jobs:
           pip install -r requirements.txt pytest
       - name: Unit tests
         run: pytest -q
+      # The door Worker (cf-container/) has its own package and vitest suite: the bearer
+      # gate vendored from vivijure-cf, and the /ready body.
+      - name: Door Worker tests (cf-container)
+        working-directory: cf-container
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
