@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Changed
+
+- **cf-container: the door Worker uses the shared vivijure-cf gate, and `GET /ready`
+  reports `token_configured` only.** `src/gate.ts` is vendored from the vivijure-cf
+  door Workers. `cf-container/test/gate.test.ts` covers 401 on a wrong or missing
+  token, 200 on the right one, and the `/ready` body; the `test` job runs it.
+
 ### Fixed
 
 - **Identity-preserving grades (`neutral` @ ~1.0, or strength 0) now fail
