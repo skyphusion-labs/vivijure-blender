@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+## 0.2.2 -- 2026-11-10
+
+### Added
+
+- **A CPU Cloudflare Container door for the compositor (#40, #41).** `cf-container/` is the
+  Worker `vivijure-blender` on `blender.skyphusion.org`, serving the image built from
+  `Dockerfile.cf`.
+
+- **`.github/workflows/deploy.yml` deploys that Worker.** It runs on a pushed `vX.Y.Z` tag, or
+  on `workflow_dispatch` from main, on a GitHub-hosted amd64 runner with Docker, and runs
+  `wrangler deploy` from `cf-container/` with wrangler pinned by the lockfile. A tag deploys only
+  when its commit is on main and `CHANGELOG.md` has a matching `## X.Y.Z` heading
+  (`scripts/deploy_gate.py`, guarded by `tests/test_deploy_gate.py`, which the workflow runs
+  first). A merge to main never deploys.
+
 ### Changed
 
 - **cf-container: the door Worker uses the shared vivijure-cf gate, and `GET /ready`
@@ -28,6 +43,13 @@
   nonexistent object. Presigned jobs now require `output_key` (or a
   `clip_key` to derive one from) before any fetch, and the returned
   `clip_key` is that written key. Never a transport-mode name.
+
+## 0.2.1 -- 2026-08-17
+
+Tagged as v0.2.1 without a changelog heading at the time; this section records what that tag
+contains (v0.2.0..v0.2.1).
+
+### Fixed
 
 - **Presigned `video_url` / `output_url` / `plate_url` were fetched with no
   SSRF gate, and exception text echoed the full URL including X-Amz tokens.**

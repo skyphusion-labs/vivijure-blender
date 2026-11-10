@@ -1,5 +1,6 @@
 # Isolated blender Cloudflare Container door. Not the studio Worker.
-# Deploy from an amd64 host (the Vultr proof box). This Mac is arm64.
+# Deployed by .github/workflows/deploy.yml on a GitHub-hosted ubuntu-latest runner (amd64, with
+# Docker): wrangler builds Dockerfile.cf for linux/amd64, so do not deploy from an arm64 machine.
 
 name = "vivijure-blender"
 main = "src/index.ts"

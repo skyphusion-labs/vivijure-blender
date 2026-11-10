@@ -25,4 +25,4 @@ RunPod **finish satellite**: headless Blender compositor for Vivijure. Paired CF
 
 ## Version
 
-Released changelog line is **0.2.0** (`CHANGELOG.md`). Newest git tag is **v0.2.1** (no 0.2.1 heading in the changelog). `main` is ahead of that tag; the top section is **Unreleased**. Bump CHANGELOG and the image tag together. Do not treat 0.1.1 as the current line.
+Released changelog line is **0.2.2** (`CHANGELOG.md`); the top section is **Unreleased**. A `vX.Y.Z` tag must match a `## X.Y.Z` heading: `.github/workflows/deploy.yml` refuses to deploy a tag the changelog does not declare (`scripts/deploy_gate.py`). Bump CHANGELOG and the tag together. Do not treat 0.1.1 as the current line.

@@ -1,0 +1,95 @@
+name: deploy
+
+# Deploys the blender door Worker (cf-container/: Worker "vivijure-blender", route
+# blender.skyphusion.org) to Cloudflare. `wrangler deploy` builds Dockerfile.cf for linux/amd64
+# with the Docker CLI before it uploads anything, so this runs on a GitHub-hosted ubuntu-latest
+# runner, which is amd64 and ships Docker. Do not deploy it from an arm64 machine.
+#
+# The same gates as the vivijure-cf tag deployers:
+#   * a pushed vX.Y.Z tag deploys only when the tagged commit is on main, and the tag matches a
+#     `## X.Y.Z` release heading in CHANGELOG.md (scripts/deploy_gate.py);
+#   * workflow_dispatch deploys only from main.
+# A merge to main never deploys. LOCAL_FINISH_TOKEN is not set here: a wrangler secret persists
+# across deploys.
+
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-vivijure-blender
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: merge-base has to be able to walk main.
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # The control runs first: a gate whose refusal has never been observed is decoration.
+      - name: Control -- the ref and version gate can refuse
+        run: |
+          python -m pip install -q pytest
+          python -m pytest -q tests/test_deploy_gate.py
+      - name: The ref may deploy, and a tag matches CHANGELOG.md
+        env:
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: python scripts/deploy_gate.py "$EVENT" "$REF" CHANGELOG.md
+      - name: The commit is on main
+        run: |
+          set -euo pipefail
+          if ! git fetch --no-tags origin main; then
+            echo "::error::could not fetch origin/main, so ancestry is UNVERIFIABLE. Refusing to deploy."
+            exit 1
+          fi
+          head="$(git rev-parse HEAD)"
+          if ! git merge-base --is-ancestor "$head" origin/main; then
+            echo "::error::commit ${head} is not on origin/main; refusing to deploy an unreviewed commit. Land it on main and re-tag; do not move the tag."
+            exit 1
+          fi
+          echo "commit ${head} is on origin/main; ancestry guard passed."
+
+  deploy:
+    needs: gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: cf-container
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      # wrangler comes from cf-container/package-lock.json, never a floating npx download.
+      - name: Install (lockfile)
+        run: npm ci --no-audit --no-fund
+      - name: Door Worker tests
+        run: npm test
+      - name: Toolchain and credentials are present
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -eu
+          command -v docker >/dev/null 2>&1 || { echo "::error::docker CLI missing; wrangler cannot build Dockerfile.cf"; exit 1; }
+          docker version --format "{{.Server.Version}}" >/dev/null 2>&1 || { echo "::error::docker daemon not reachable"; exit 1; }
+          [ -n "${CLOUDFLARE_API_TOKEN:+SET}" ] || { echo "::error::secret CLOUDFLARE_API_TOKEN is not set for this repo"; exit 1; }
+          [ -n "${CLOUDFLARE_ACCOUNT_ID:+SET}" ] || { echo "::error::secret CLOUDFLARE_ACCOUNT_ID is not set for this repo"; exit 1; }
+          echo "docker $(docker --version); wrangler $(npx --no-install wrangler --version)"
+      - name: Deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx --no-install wrangler deploy
