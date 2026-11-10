@@ -17,9 +17,9 @@ from runpod_http_serve import run_serve
 
 
 def hydrate_secret_files() -> list[str]:
-    """Populate NAME from NAME_FILE, the standard Docker/swarm secrets convention.
+    """Populate NAME from NAME_FILE, the standard Docker secrets convention.
 
-    Swarm delivers secrets as FILES under /run/secrets, while handler.py reads plain
+    Docker-style secrets arrive as FILES (e.g. under /run/secrets), while handler.py reads plain
     environment variables (R2_ACCESS_KEY_ID and friends). Without this bridge a stack file
     would have to carry the values in an environment block, which is exactly the plaintext
     in a tracked file that is not allowed. Doing it here rather than in handler.py keeps
