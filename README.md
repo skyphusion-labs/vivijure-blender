@@ -127,7 +127,7 @@ cp deploy.env.example deploy.env   # fill RUNPOD_API_KEY, IMAGE, R2_*, ...
 Idempotent and fail-closed. Full walk-through: [docs/deploy.md](docs/deploy.md).
 
 Published image (tag-gated CI): `ghcr.io/skyphusion-labs/vivijure-blender:<version>`
-(e.g. `0.1.0`). Pin the endpoint template to an explicit version; there is no `:latest`.
+(e.g. `0.1.0`). Pin the endpoint image to an explicit version; there is no `:latest`.
 
 ## Turn it on in the studio
 

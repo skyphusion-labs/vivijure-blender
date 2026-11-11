@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+- `deploy.sh` moves to RunPod REST v2 (skyphusion-labs/fleet-chezmoi#2085). RunPod REST v1 retires 2026-11-15. On v2 an endpoint carries its own image, env, disk and registry, and a template no longer reaches it, so deploy.sh makes no template. It finds the endpoint by name across every list page and updates it in place (image, env, GPU pools, workers, timeout), or creates it, at `https://api.runpod.io/v2/serverless`. Before, a re-run left an existing endpoint as it was and moved its image through the template, which v2 no longer does. GPUs are chosen by pool: `GPU_TYPE_IDS` is mapped, or `GPU_POOLS` names pools directly.
+- `deploy.sh` exports its defaulted knobs (`CONTAINER_DISK_GB`, `WORKERS_*`, `IDLE_TIMEOUT`, ...), as vivijure-upscale does since its #105. The body is built in a child python3, so a knob left unset in deploy.env raised KeyError instead of taking its default.
+- `deploy.env.example` now quotes `GPU_TYPE_IDS`. Unquoted, sourcing it stopped the deploy with "command not found".
+
 ### Changed
 
 - The blender door stops answering on `*.workers.dev` (`cf-container/wrangler.toml`: `workers_dev = false`; `preview_urls` stays `false`). It already answers on `blender.skyphusion.org`, and its bearer gate refused a request on every hostname, so the workers.dev name was a second hostname nobody used (skyphusion-labs/vivijure-cf#1401).
