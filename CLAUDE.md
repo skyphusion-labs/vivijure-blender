@@ -2,7 +2,7 @@
 
 ## Role
 
-RunPod **finish satellite**: headless Blender compositor for Vivijure. Paired CF module:
+**Finish satellite** (RunPod Serverless, or a Cloudflare Container door): headless Blender compositor for Vivijure. Paired CF module:
 `vivijure-cf/modules/finish-blender` (`MODULE_FINISH_BLENDER`).
 
 ## Non-goals (v1)
