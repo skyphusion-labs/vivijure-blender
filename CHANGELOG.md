@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- The blender door stops answering on `*.workers.dev` (`cf-container/wrangler.toml`: `workers_dev = false`; `preview_urls` stays `false`). It already answers on `blender.skyphusion.org`, and its bearer gate refused a request on every hostname, so the workers.dev name was a second hostname nobody used (skyphusion-labs/vivijure-cf#1401).
+
 ## 0.2.2 -- 2026-11-10
 
 ### Added
