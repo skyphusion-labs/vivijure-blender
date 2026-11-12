@@ -5,7 +5,10 @@
 
 **Grades your finished clips with a headless Blender compositor.** This is the color-grade finish
 engine for [Vivijure](https://github.com/skyphusion-labs/vivijure), the AI film studio. It runs on
-RunPod Serverless, takes a shot clip, and hands back a graded version using fixed look presets.
+RunPod Serverless, or as a door: the same engine in a Cloudflare Container (`cf-container/`,
+deployed by `.github/workflows/deploy.yml`). The studio's `finish-blender` module uses the doors
+when `FINISH_BLENDER_DOORS` is set, and RunPod otherwise. It takes a shot clip, and hands back a
+graded version using fixed look presets.
 Under the hood it is **Blender LTS** (GPL) driven by a baked bpy graph -- no free-form scripts.
 
 ## Where this fits
@@ -29,21 +32,19 @@ flowchart TD
 
     subgraph modules[Modules: one job each, opt-in]
         cloudmods[Cloud video modules<br/>Seedance, Kling, Veo, Wan, ...]
-        finishmods[Finish modules<br/>upscale, smooth, lip-sync, blender, titles]
+        finishmods[Finish modules<br/>upscale, smooth, blender, titles]
         audiomods[Audio modules<br/>music, narration]
     end
 
     subgraph gpu[The GPU render engines]
-        backend[vivijure-backend<br/>RunPod cloud GPU:<br/>keyframes, image-to-video, LoRA training]
+        backend[vivijure-backend<br/>RunPod cloud GPU:<br/>SDXL keyframes]
         local12[vivijure-local-12gb<br/>your own 12GB card LTX]
         local16[vivijure-local-16gb<br/>your own 16GB card CogVideoX]
     end
 
     subgraph finish[Finish helper engines]
-        musetalk[vivijure-musetalk<br/>lip-sync]
         blender[vivijure-blender<br/>compositor grade]
         upscale[vivijure-upscale<br/>video upscale]
-        audioup[vivijure-audio-upscale<br/>audio cleanup]
     end
 
     discord --> slate
@@ -52,11 +53,8 @@ flowchart TD
     studio --> cloudmods
     studio --> finishmods
     studio --> audiomods
-    cloudmods --> backend
-    finishmods --> musetalk
     finishmods --> blender
     finishmods --> upscale
-    audiomods --> audioup
     studio --> backend
     studio --> local12
     studio --> local16
@@ -75,17 +73,15 @@ and the upscaler enlarges the already-looked clip.
 
 ```mermaid
 flowchart LR
-  sp["speech<br/>enhance"]
   subgraph finish["finish chain · ui.order"]
     direction LR
     rife["finish-rife<br/>smooth · 10"]
-    ls["finish-lipsync<br/>MuseTalk · 15"]
     bl["finish-blender<br/>grade · 18"]
     up["finish-upscale<br/>Real-ESRGAN · 20"]
   end
   asm["assemble / mux"]
 
-  sp --> rife --> ls --> bl --> up --> asm
+  rife --> bl --> up --> asm
 
   style bl fill:#fb923c,stroke:#c2410c,color:#111
 ```
@@ -127,7 +123,8 @@ cp deploy.env.example deploy.env   # fill RUNPOD_API_KEY, IMAGE, R2_*, ...
 Idempotent and fail-closed. Full walk-through: [docs/deploy.md](docs/deploy.md).
 
 Published image (tag-gated CI): `ghcr.io/skyphusion-labs/vivijure-blender:<version>`
-(e.g. `0.1.0`). Pin the endpoint image to an explicit version; there is no `:latest`.
+(e.g. `0.1.0`). Pin the endpoint image to an explicit version or a digest. `:latest` exists and
+tracks the newest release (`build-image.yml`), but nothing may ever pin it.
 
 ## Turn it on in the studio
 
